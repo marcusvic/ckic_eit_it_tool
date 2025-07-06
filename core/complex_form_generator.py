@@ -178,11 +178,7 @@ class ComplexFormGenerator:
         base_key = f"{field.parent_path}_{field.name}" if field.parent_path else field.name
         widget_key = f"{key_prefix}_{base_key}" if key_prefix else base_key
         
-        # Add indentation for nested fields
-        if level > 0:
-            indent = "  " * level
-            st.markdown(f"{indent}*Field: {field.name}*")
-        
+        # Create the widget directly without extra field label
         return self.base_form_generator._create_widget(field.name, field_info, widget_key)
     
     def _get_field_type(self, field: SchemaField) -> Type:

@@ -331,3 +331,7 @@ class DataModelGenerator:
     def _is_repeatable_element(self, field: SchemaField) -> bool:
         """Check if an element is repeatable (maxOccurs > 1 or unbounded)"""
         return field.max_occurs is None or (field.max_occurs and field.max_occurs > 1)
+
+    def _is_repeatable_element(self, field: SchemaField) -> bool:
+        """Check if an element is repeatable (maxOccurs > 1 or unbounded)"""
+        return field.max_occurs is None or (field.max_occurs and field.max_occurs > 1)
