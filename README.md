@@ -90,23 +90,27 @@ Environment variables for configuration:
 
 ```
 eit_tool/
-├── app.py                 # Main Streamlit application
-├── requirements.txt       # Python dependencies
-├── architecture_design.md # Architecture documentation
-├── core/
-│   ├── xsd_parser.py     # XSD parsing logic
-│   ├── data_model.py     # Dynamic data model generation
-│   ├── form_generator.py # UI form generation
-│   └── xml_engine.py     # XML generation and validation
-├── api/
-│   └── api_interface.py  # REST API endpoints
-├── config/
-│   └── config.py         # Application configuration
-├── data/
-│   └── schemas/          # XSD files directory
-├── tests/
-│   └── test_basic.py     # Basic functionality tests
-└── README.md             # This file
+├── app.py                           # Main Streamlit application
+├── requirements.txt                 # Python dependencies
+├── README.md                        # Project documentation
+├── EIT IT Tool - Extended_projects_v1.16.xsd  # Sample XSD schema
+├── PROJ_EIT-CLIMATE_KIC_230040 1.xml          # Sample XML output
+├── core/                            # Core application modules
+│   ├── __init__.py
+│   ├── xsd_parser.py               # XSD parsing and analysis
+│   ├── data_model.py               # Dynamic Pydantic model generation
+│   ├── form_generator.py           # Basic form generation
+│   ├── complex_form_generator.py   # Advanced hierarchical forms
+│   └── xml_engine.py               # XML generation and validation
+├── api/                            # REST API interface
+│   ├── __init__.py
+│   └── api_interface.py            # FastAPI endpoints
+├── config/                         # Configuration management
+│   ├── __init__.py
+│   └── config.py                   # Application settings
+└── tests/                          # Test suite
+    ├── __init__.py
+    └── test_basic.py               # Basic functionality tests
 ```
 
 ## Testing

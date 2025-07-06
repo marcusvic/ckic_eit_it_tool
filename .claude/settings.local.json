@@ -12,7 +12,8 @@
       "Bash(find:*)",
       "Bash(streamlit run:*)",
       "Bash(grep:*)",
-      "Bash(cp:*)"
+      "Bash(cp:*)",
+      "Bash(rm:*)"
     ],
     "deny": []
   }
