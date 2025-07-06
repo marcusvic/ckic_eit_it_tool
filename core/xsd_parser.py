@@ -42,6 +42,8 @@ class SchemaField:
     children: Optional[List['SchemaField']] = None
     is_complex: bool = False  # True if this is a container element
     parent_path: str = ""     # Path to parent element
+    min_occurs: int = 1       # Minimum occurrences (from minOccurs)
+    max_occurs: Optional[int] = 1  # Maximum occurrences (from maxOccurs, None = unbounded)
 
 
 class XSDParser:
@@ -77,13 +79,23 @@ class XSDParser:
         """Parse an individual element and its children"""
         current_path = f"{parent_path}.{element.name}" if parent_path else element.name
         
+        # Extract occurrence information
+        min_occurs = getattr(element, 'min_occurs', 1)
+        max_occurs = getattr(element, 'max_occurs', 1)
+        
+        # Handle unbounded maxOccurs (represented as None)
+        if max_occurs is None or (hasattr(max_occurs, '__str__') and str(max_occurs) == 'unbounded'):
+            max_occurs = None  # None represents unbounded
+        
         field = SchemaField(
             name=element.name,
             data_type=self._get_data_type(element),
-            required=element.min_occurs > 0,
+            required=min_occurs > 0,
             documentation=self._get_documentation(element),
             constraints=self._get_constraints(element),
-            parent_path=parent_path
+            parent_path=parent_path,
+            min_occurs=min_occurs,
+            max_occurs=max_occurs
         )
         
         # Handle complex types with children
@@ -97,13 +109,42 @@ class XSDParser:
         """Parse complex type and extract child elements"""
         children = []
         
+        # Check if the complex type has a model group (sequence) with occurrence info
+        sequence_min_occurs = 1
+        sequence_max_occurs = 1
+        
+        if hasattr(complex_type, 'model_group') and complex_type.model_group:
+            model_group = complex_type.model_group
+            sequence_min_occurs = getattr(model_group, 'min_occurs', 1)
+            sequence_max_occurs = getattr(model_group, 'max_occurs', 1)
+            
+            # Handle unbounded maxOccurs
+            if sequence_max_occurs is None:
+                sequence_max_occurs = None  # None represents unbounded
+        
         if hasattr(complex_type, 'content') and complex_type.content:
             for child in complex_type.content:
                 if hasattr(child, 'iter_elements'):
                     for elem in child.iter_elements():
-                        children.append(self._parse_element(elem, parent_path))
+                        child_field = self._parse_element(elem, parent_path)
+                        
+                        # If the sequence is repeatable, update child's occurrence info
+                        if sequence_max_occurs is None or sequence_max_occurs > 1:
+                            child_field.min_occurs = sequence_min_occurs
+                            child_field.max_occurs = sequence_max_occurs
+                            child_field.required = sequence_min_occurs > 0
+                        
+                        children.append(child_field)
                 elif hasattr(child, 'name'):
-                    children.append(self._parse_element(child, parent_path))
+                    child_field = self._parse_element(child, parent_path)
+                    
+                    # If the sequence is repeatable, update child's occurrence info
+                    if sequence_max_occurs is None or sequence_max_occurs > 1:
+                        child_field.min_occurs = sequence_min_occurs
+                        child_field.max_occurs = sequence_max_occurs
+                        child_field.required = sequence_min_occurs > 0
+                    
+                    children.append(child_field)
         
         return children
     

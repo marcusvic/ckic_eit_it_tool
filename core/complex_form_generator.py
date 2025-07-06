@@ -29,6 +29,10 @@ class ComplexFormGenerator:
         # Initialize session state for complex element toggles
         if 'complex_element_states' not in st.session_state:
             st.session_state.complex_element_states = {}
+        
+        # Initialize session state for repeatable element instances
+        if 'repeatable_instances' not in st.session_state:
+            st.session_state.repeatable_instances = {}
     
     def generate_hierarchical_form(self, root_field: SchemaField) -> Dict[str, Any]:
         """Generate a hierarchical form based on the XSD structure"""
@@ -45,13 +49,17 @@ class ComplexFormGenerator:
         return form_data
     
     def _process_field(self, field: SchemaField, level: int = 0) -> Any:
-        """Process a field - either simple or complex"""
-        indent = "  " * level
+        """Process a field - either simple or complex, handling repeatability"""
         
-        if field.is_complex:
-            return self._process_complex_field(field, level)
+        # Check if this is a repeatable element
+        if self._is_repeatable_element(field):
+            return self._process_repeatable_field(field, level)
         else:
-            return self._process_simple_field(field, level)
+            # Non-repeatable field - process normally
+            if field.is_complex:
+                return self._process_complex_field(field, level)
+            else:
+                return self._process_simple_field(field, level)
     
     def _process_complex_field(self, field: SchemaField, level: int) -> Optional[Dict[str, Any]]:
         """Process a complex field (container)"""
@@ -121,19 +129,20 @@ class ComplexFormGenerator:
         
         return include_element
     
-    def _render_complex_element_children(self, field: SchemaField, level: int) -> Dict[str, Any]:
+    def _render_complex_element_children(self, field: SchemaField, level: int, key_prefix: str = "") -> Dict[str, Any]:
         """Render children of a complex element"""
         children_data = {}
         
         if field.children:
             # Group children by type for better organization
-            simple_children = [child for child in field.children if not child.is_complex]
-            complex_children = [child for child in field.children if child.is_complex]
+            simple_children = [child for child in field.children if not child.is_complex and not self._is_repeatable_element(child)]
+            complex_children = [child for child in field.children if child.is_complex and not self._is_repeatable_element(child)]
+            repeatable_children = [child for child in field.children if self._is_repeatable_element(child)]
             
             # Render simple children first
             if simple_children:
                 for child in simple_children:
-                    child_data = self._process_simple_field(child, level + 1)
+                    child_data = self._process_simple_field(child, level + 1, key_prefix)
                     if child_data is not None:
                         children_data[child.name] = child_data
             
@@ -143,10 +152,17 @@ class ComplexFormGenerator:
                     child_data = self._process_complex_field(child, level + 1)
                     if child_data is not None:
                         children_data[child.name] = child_data
+            
+            # Finally render repeatable children
+            if repeatable_children:
+                for child in repeatable_children:
+                    child_data = self._process_repeatable_field(child, level + 1)
+                    if child_data is not None:
+                        children_data[child.name] = child_data
         
         return children_data
     
-    def _process_simple_field(self, field: SchemaField, level: int) -> Any:
+    def _process_simple_field(self, field: SchemaField, level: int, key_prefix: str = "") -> Any:
         """Process a simple field (data holder)"""
         # Create field info dictionary for the base form generator
         field_info = {
@@ -158,8 +174,9 @@ class ComplexFormGenerator:
             'constraints': self._get_field_constraints(field)
         }
         
-        # Use base form generator to create the widget
-        widget_key = f"{field.parent_path}_{field.name}" if field.parent_path else field.name
+        # Create unique widget key with optional prefix for repeatable elements
+        base_key = f"{field.parent_path}_{field.name}" if field.parent_path else field.name
+        widget_key = f"{key_prefix}_{base_key}" if key_prefix else base_key
         
         # Add indentation for nested fields
         if level > 0:
@@ -292,3 +309,108 @@ class ComplexFormGenerator:
                 return None
         
         return current
+    
+    def _is_repeatable_element(self, field: SchemaField) -> bool:
+        """Check if an element is repeatable (maxOccurs > 1 or unbounded)"""
+        return field.max_occurs is None or (field.max_occurs and field.max_occurs > 1)
+    
+    def _get_repeatable_instance_count(self, field_path: str) -> int:
+        """Get the current number of instances for a repeatable element"""
+        return st.session_state.repeatable_instances.get(field_path, 0)
+    
+    def _set_repeatable_instance_count(self, field_path: str, count: int):
+        """Set the number of instances for a repeatable element"""
+        st.session_state.repeatable_instances[field_path] = count
+    
+    def _get_minimum_instances(self, field: SchemaField) -> int:
+        """Get the minimum number of instances required for a repeatable element"""
+        return max(field.min_occurs, 0)
+    
+    def _initialize_repeatable_instances(self, field: SchemaField, field_path: str):
+        """Initialize instances for a repeatable element if not already set"""
+        if field_path not in st.session_state.repeatable_instances:
+            # Start with minimum required instances, but at least 1 if min_occurs > 0
+            min_instances = self._get_minimum_instances(field)
+            initial_count = max(min_instances, 1) if field.required else min_instances
+            self._set_repeatable_instance_count(field_path, initial_count)
+    
+    def _process_repeatable_field(self, field: SchemaField, level: int) -> List[Any]:
+        """Process a repeatable field (maxOccurs > 1)"""
+        field_path = f"{field.parent_path}.{field.name}" if field.parent_path else field.name
+        indent = "  " * level
+        
+        # Initialize instances if needed
+        self._initialize_repeatable_instances(field, field_path)
+        
+        # Get current instance count
+        instance_count = self._get_repeatable_instance_count(field_path)
+        min_instances = self._get_minimum_instances(field)
+        
+        # Create header for repeatable section
+        if level == 0:
+            st.subheader(f"📋 {field.name} (Repeatable)")
+        else:
+            st.markdown(f"**{indent}📋 {field.name} (Repeatable)**")
+        
+        if field.documentation:
+            st.markdown(f"{indent}*{field.documentation}*")
+        
+        # Show occurrence info
+        max_text = "unlimited" if field.max_occurs is None else str(field.max_occurs)
+        st.markdown(f"{indent}*Can have {field.min_occurs} to {max_text} instances*")
+        
+        # Add/Remove controls
+        col1, col2, col3 = st.columns([2, 1, 1])
+        
+        with col1:
+            st.markdown(f"**Current instances: {instance_count}**")
+        
+        with col2:
+            # Add button
+            add_key = f"add_{field_path}_{level}"
+            if st.button(f"➕ Add {field.name}", key=add_key):
+                new_count = instance_count + 1
+                # Check max limit
+                if field.max_occurs is None or new_count <= field.max_occurs:
+                    self._set_repeatable_instance_count(field_path, new_count)
+                    st.rerun()
+                else:
+                    st.warning(f"Maximum {field.max_occurs} instances allowed")
+        
+        with col3:
+            # Remove button
+            remove_key = f"remove_{field_path}_{level}"
+            if st.button(f"➖ Remove", key=remove_key):
+                if instance_count > min_instances:
+                    new_count = instance_count - 1
+                    self._set_repeatable_instance_count(field_path, new_count)
+                    st.rerun()
+                else:
+                    st.warning(f"Minimum {min_instances} instances required")
+        
+        # Render instances
+        instances_data = []
+        
+        for i in range(instance_count):
+            st.markdown("---")
+            
+            # Instance header
+            if level == 0:
+                st.subheader(f"📄 {field.name} #{i+1}")
+            else:
+                st.markdown(f"**{indent}📄 {field.name} #{i+1}**")
+            
+            # Create unique keys for this instance
+            instance_key_prefix = f"{field_path}_instance_{i}"
+            
+            # Process the field content for this instance
+            if field.is_complex:
+                # Complex repeatable element
+                instance_data = self._render_complex_element_children(field, level + 1, instance_key_prefix)
+            else:
+                # Simple repeatable element (rare case)
+                instance_data = self._process_simple_field(field, level + 1, instance_key_prefix)
+            
+            instances_data.append(instance_data)
+        
+        return instances_data
