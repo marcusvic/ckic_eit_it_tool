@@ -11,7 +11,7 @@ from datetime import date, datetime
 from decimal import Decimal
 import xmlschema
 
-from .xsd_parser import XSDParser
+from .xsd_parser import XSDParser, SchemaField
 
 
 class XMLEngine:
@@ -20,6 +20,130 @@ class XMLEngine:
     def __init__(self, xsd_parser: XSDParser):
         self.xsd_parser = xsd_parser
         self.schema = xmlschema.XMLSchema(xsd_parser.xsd_path)
+    
+    def create_model_instance_from_form_data(self, form_data: Dict[str, Any], model_class: Type[BaseModel]) -> BaseModel:
+        """Convert form data with lists of dictionaries to proper Pydantic model instance"""
+        # Get model fields info
+        if hasattr(model_class, 'model_fields'):
+            fields = model_class.model_fields
+        else:
+            fields = model_class.__fields__
+        
+        processed_data = {}
+        
+        for field_name, field_value in form_data.items():
+            if field_name not in fields:
+                continue
+            
+            # Skip empty optional fields
+            if field_value is None or (isinstance(field_value, str) and field_value.strip() == ""):
+                field_info = fields[field_name]
+                # Check if field is required
+                if hasattr(field_info, 'is_required'):
+                    is_required = field_info.is_required()
+                else:
+                    is_required = getattr(field_info, 'required', True)
+                
+                if not is_required:
+                    # Skip optional empty fields
+                    continue
+                else:
+                    # Set None for required empty fields (let Pydantic handle validation)
+                    processed_data[field_name] = None
+                    continue
+                
+            field_info = fields[field_name]
+            
+            # Get field type
+            if hasattr(field_info, 'annotation'):
+                field_type = field_info.annotation
+            else:
+                field_type = getattr(field_info, 'type_', str)
+            
+            # Handle Optional types (Union[SomeType, None])
+            original_field_type = field_type
+            if hasattr(field_type, '__origin__') and field_type.__origin__ is Union:
+                # Check if this is Optional[T] (which is Union[T, None])
+                args = field_type.__args__
+                if len(args) == 2 and type(None) in args:
+                    # This is Optional[T], get the non-None type
+                    field_type = next(arg for arg in args if arg is not type(None))
+            
+            # Check if this is a List type
+            if hasattr(field_type, '__origin__') and field_type.__origin__ is list:
+                # This is a List[SomeModel] field
+                inner_type = field_type.__args__[0]
+                
+                if isinstance(field_value, list):
+                    if not field_value:  # Empty list
+                        # For empty lists, skip if optional or set empty list if required
+                        if hasattr(field_info, 'is_required'):
+                            is_required = field_info.is_required()
+                        else:
+                            is_required = getattr(field_info, 'required', True)
+                        
+                        if not is_required:
+                            continue  # Skip empty optional list
+                        else:
+                            processed_data[field_name] = []  # Set empty list for required field
+                    else:
+                        # Convert list of dictionaries to list of model instances
+                        if hasattr(inner_type, 'model_fields') or hasattr(inner_type, '__fields__'):
+                            # inner_type is a Pydantic model
+                            processed_instances = []
+                            for item_data in field_value:
+                                if isinstance(item_data, dict):
+                                    # Recursively process nested model
+                                    nested_instance = self.create_model_instance_from_form_data(item_data, inner_type)
+                                    processed_instances.append(nested_instance)
+                                else:
+                                    # Simple value
+                                    processed_instances.append(item_data)
+                            processed_data[field_name] = processed_instances
+                        else:
+                            # List of simple types
+                            processed_data[field_name] = field_value
+                else:
+                    processed_data[field_name] = field_value
+            elif hasattr(field_type, 'model_fields') or hasattr(field_type, '__fields__'):
+                # This is a nested model field
+                if isinstance(field_value, dict):
+                    processed_data[field_name] = self.create_model_instance_from_form_data(field_value, field_type)
+                else:
+                    processed_data[field_name] = field_value
+            else:
+                # Simple field
+                processed_data[field_name] = field_value
+        
+        return model_class(**processed_data)
+    
+    def _find_schema_field_by_name(self, schema_field: SchemaField, field_name: str) -> Optional[SchemaField]:
+        """Find a child schema field by name"""
+        if not schema_field.children:
+            return None
+        
+        for child in schema_field.children:
+            if child.name == field_name:
+                return child
+        return None
+    
+    def generate_xml_from_form_data(self, form_data: Dict[str, Any], pretty_print: bool = True) -> str:
+        """Generate XML directly from form data, bypassing Pydantic model conversion"""
+        # Get the root element name
+        root_name = self.xsd_parser.root_element.name if self.xsd_parser.root_element else "Root"
+        
+        # Create root element
+        root = ET.Element(root_name)
+        
+        # Build XML tree directly from form data using XSD order
+        root_schema = self.xsd_parser.parsed_structure
+        self._build_xml_from_data(root, form_data, root_schema)
+        
+        # Convert to string
+        if pretty_print:
+            self._indent_xml(root)
+        
+        return ET.tostring(root, encoding='unicode')
     
     def generate_xml(self, model_instance: BaseModel, pretty_print: bool = True) -> str:
         """Generate XML string from a Pydantic model instance"""
@@ -38,35 +162,117 @@ class XMLEngine:
         
         return ET.tostring(root, encoding='unicode')
     
+    def _build_xml_from_data(self, parent: ET.Element, data: Dict[str, Any], schema_field: Optional['SchemaField'] = None):
+        """Build XML elements directly from form data dictionary following XSD sequence order"""
+        if schema_field and schema_field.children:
+            # Use XSD order when schema information is available
+            for child_schema in schema_field.children:
+                field_name = child_schema.name
+                
+                # Get field value from data
+                field_value = data.get(field_name)
+                
+                # Skip None values
+                if field_value is None:
+                    continue
+                
+                # Skip empty string values for optional fields
+                if isinstance(field_value, str) and field_value.strip() == "":
+                    continue
+                
+                # Process the field value in XSD order
+                self._build_xml_field(parent, field_name, field_value, child_schema)
+        else:
+            # Fallback to dictionary order when no schema available
+            for field_name, field_value in data.items():
+                # Skip None values
+                if field_value is None:
+                    continue
+                
+                # Skip empty string values for optional fields
+                if isinstance(field_value, str) and field_value.strip() == "":
+                    continue
+                
+                # Process without schema information
+                self._build_xml_field(parent, field_name, field_value, None)
+    
+    def _build_xml_field(self, parent: ET.Element, field_name: str, field_value: Any, schema_field: Optional[SchemaField] = None):
+        """Build XML for a single field"""
+        # Handle different value types
+        if isinstance(field_value, list):
+            # Handle lists - create multiple elements with same tag name
+            if field_value:  # Only process non-empty lists
+                for item in field_value:
+                    item_element = ET.SubElement(parent, field_name)
+                    if isinstance(item, dict):
+                        # Dictionary item - build nested elements using schema field for this element
+                        self._build_xml_from_data(item_element, item, schema_field)
+                    else:
+                        # Simple value
+                        item_element.text = str(item)
+        elif isinstance(field_value, dict):
+            # Handle nested dictionaries
+            child_element = ET.SubElement(parent, field_name)
+            # Use the schema field for this nested element
+            self._build_xml_from_data(child_element, field_value, schema_field)
+        else:
+            # Simple value
+            child_element = ET.SubElement(parent, field_name)
+            child_element.text = self._format_value(field_value)
+    
     def _build_xml_element(self, parent: ET.Element, model_instance: BaseModel):
         """Recursively build XML elements from model instance"""
         for field_name, field_value in model_instance.dict().items():
             if field_value is None:
                 continue
             
-            # Create child element
-            child_element = ET.SubElement(parent, field_name)
+            # Skip empty string values for optional fields
+            if isinstance(field_value, str) and field_value.strip() == "":
+                continue
             
             # Handle different value types
             if isinstance(field_value, BaseModel):
-                # Nested model - recurse
+                # Nested model - create element and recurse
+                child_element = ET.SubElement(parent, field_name)
                 self._build_xml_element(child_element, field_value)
             elif isinstance(field_value, list):
-                # Handle lists
-                parent.remove(child_element)  # Remove the wrapper element
-                for item in field_value:
-                    item_element = ET.SubElement(parent, field_name)
-                    if isinstance(item, BaseModel):
-                        self._build_xml_element(item_element, item)
-                    else:
-                        item_element.text = str(item)
+                # Handle lists - don't create wrapper element
+                if field_value:  # Only process non-empty lists
+                    for item in field_value:
+                        item_element = ET.SubElement(parent, field_name)
+                        if isinstance(item, BaseModel):
+                            self._build_xml_element(item_element, item)
+                        else:
+                            item_element.text = str(item)
             elif isinstance(field_value, dict):
-                # Handle dictionaries
+                # Handle dictionaries (shouldn't happen with proper conversion, but fallback)
+                child_element = ET.SubElement(parent, field_name)
                 for key, value in field_value.items():
-                    dict_element = ET.SubElement(child_element, key)
-                    dict_element.text = str(value)
+                    if isinstance(value, (dict, list)):
+                        # Nested complex structure - handle recursively
+                        if isinstance(value, list):
+                            # List of items
+                            for item in value:
+                                item_element = ET.SubElement(child_element, key)
+                                if isinstance(item, dict):
+                                    # Dictionary item - convert to XML elements
+                                    for sub_key, sub_value in item.items():
+                                        sub_element = ET.SubElement(item_element, sub_key)
+                                        sub_element.text = str(sub_value)
+                                else:
+                                    item_element.text = str(item)
+                        else:
+                            # Single dictionary
+                            dict_element = ET.SubElement(child_element, key)
+                            for sub_key, sub_value in value.items():
+                                sub_element = ET.SubElement(dict_element, sub_key)
+                                sub_element.text = str(sub_value)
+                    else:
+                        dict_element = ET.SubElement(child_element, key)
+                        dict_element.text = str(value)
             else:
                 # Simple value
+                child_element = ET.SubElement(parent, field_name)
                 child_element.text = self._format_value(field_value)
     
     def _format_value(self, value: Any) -> str:

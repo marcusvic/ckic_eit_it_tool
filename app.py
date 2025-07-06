@@ -183,16 +183,17 @@ def main():
         
         if hasattr(st.session_state, 'form_data') and st.session_state.form_data:
             try:
-                # Create model instance
-                model_instance = st.session_state.root_model(**st.session_state.form_data)
+                # Generate XML directly from form data to avoid Pydantic conversion issues
+                st.session_state.generated_xml = st.session_state.xml_engine.generate_xml_from_form_data(
+                    st.session_state.form_data
+                )
                 
-                # Generate XML preview
-                xml_preview = st.session_state.xml_engine.get_xml_preview(model_instance)
+                # Show preview (first 1000 characters)
+                xml_preview = st.session_state.generated_xml
+                if len(xml_preview) > 1000:
+                    xml_preview = xml_preview[:1000] + "..."
                 
                 st.code(xml_preview, language='xml')
-                
-                # Store generated XML in session state
-                st.session_state.generated_xml = st.session_state.xml_engine.generate_xml(model_instance)
                 
             except Exception as e:
                 st.error(f"Error generating XML preview: {str(e)}")
@@ -243,9 +244,8 @@ def main():
             st.info(f"XML Size: {xml_size} bytes")
             
             # Show validation status
-            if hasattr(st.session_state, 'form_data'):
+            if hasattr(st.session_state, 'generated_xml'):
                 try:
-                    model_instance = st.session_state.root_model(**st.session_state.form_data)
                     is_valid, errors = st.session_state.xml_engine.validate_xml(st.session_state.generated_xml)
                     
                     if is_valid:

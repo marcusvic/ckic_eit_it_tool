@@ -269,14 +269,24 @@ class ComplexFormGenerator:
                 # Find the corresponding field in the schema
                 field = self._find_field_by_path(current_path)
                 
-                if field and field.required:
-                    if isinstance(value, dict):
-                        # Complex field - validate children
-                        validate_required_fields(value, current_path)
+                if field:
+                    # Only validate if field is truly required (minOccurs > 0)
+                    if field.required:
+                        if isinstance(value, dict):
+                            # Complex field - validate children
+                            validate_required_fields(value, current_path)
+                        elif isinstance(value, list):
+                            # List field - check if minimum occurrences are met
+                            if len(value) < field.min_occurs:
+                                errors.append(f"Required field '{current_path}' needs at least {field.min_occurs} items, but has {len(value)}")
+                        else:
+                            # Simple field - check if filled
+                            if value is None or str(value).strip() == "":
+                                errors.append(f"Required field '{current_path}' is empty")
                     else:
-                        # Simple field - check if filled
-                        if value is None or str(value).strip() == "":
-                            errors.append(f"Required field '{current_path}' is empty")
+                        # Optional field - only validate children if present
+                        if isinstance(value, dict) and value:
+                            validate_required_fields(value, current_path)
         
         validate_required_fields(form_data)
         
@@ -290,7 +300,17 @@ class ComplexFormGenerator:
         parts = path.split('.')
         current = self.xsd_parser.parsed_structure
         
-        for part in parts[1:]:  # Skip root element
+        # For single-part paths (top-level fields), look in the root's children
+        if len(parts) == 1:
+            if current.children:
+                for child in current.children:
+                    if child.name == parts[0]:
+                        return child
+            return None
+        
+        # For multi-part paths, navigate through the hierarchy
+        # Skip the first part as it's typically the root element name
+        for part in parts[1:]:
             if not current.children:
                 return None
             
