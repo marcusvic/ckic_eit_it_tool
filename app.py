@@ -37,6 +37,82 @@ def initialize_session_state():
         st.session_state.current_xsd_path = None
     if 'ingested_xml_data' not in st.session_state:
         st.session_state.ingested_xml_data = None
+    if 'temp_imported_data' not in st.session_state:
+        st.session_state.temp_imported_data = None
+
+
+def preprocess_imported_data_for_repeatables(imported_data: Dict[str, Any], xsd_parser) -> Dict[str, Any]:
+    """Preprocess imported data to handle repeatable elements correctly"""
+    if not imported_data or not xsd_parser:
+        return imported_data
+    
+    # Initialize repeatable instances in session state if not exists
+    if 'repeatable_instances' not in st.session_state:
+        st.session_state.repeatable_instances = {}
+    
+    # First pass: Find all repeatable elements in the schema and their paths
+    def find_repeatable_paths(schema_field, parent_path=""):
+        """Find all repeatable element paths in the schema"""
+        repeatable_paths = {}
+        
+        if not schema_field or not hasattr(schema_field, 'children') or schema_field.children is None:
+            return repeatable_paths
+            
+        for child in schema_field.children:
+            if child is None:
+                continue
+                
+            field_path = f"{parent_path}.{child.name}" if parent_path else child.name
+            
+            # Check if this field is repeatable
+            if hasattr(child, 'max_occurs') and (child.max_occurs is None or child.max_occurs > 1):
+                repeatable_paths[child.name] = field_path
+            
+            # Recursively check children if they exist
+            if hasattr(child, 'children') and child.children is not None:
+                child_paths = find_repeatable_paths(child, field_path)
+                repeatable_paths.update(child_paths)
+        
+        return repeatable_paths
+    
+    # Get all repeatable paths from schema
+    repeatable_paths = find_repeatable_paths(xsd_parser.parsed_structure)
+    
+    # Second pass: Process the imported data and count instances
+    def count_instances_in_data(data: Dict[str, Any], parent_path: str = ""):
+        """Count instances of repeatable elements in the data"""
+        for key, value in data.items():
+            current_path = f"{parent_path}.{key}" if parent_path else key
+            
+            # Check if this key corresponds to a repeatable element
+            if key in repeatable_paths:
+                # The schema path includes the root "Project" element, but our data doesn't
+                # So we need to prepend "Project" to match the schema paths
+                schema_path = repeatable_paths[key]
+                if not schema_path.startswith("Project."):
+                    full_path = f"Project.{schema_path}"
+                else:
+                    full_path = schema_path
+                    
+                if isinstance(value, list):
+                    count = len(value)
+                    st.session_state.repeatable_instances[full_path] = count
+                else:
+                    st.session_state.repeatable_instances[full_path] = 1
+            
+            # Recursively process nested dictionaries
+            if isinstance(value, dict):
+                count_instances_in_data(value, current_path)
+            elif isinstance(value, list):
+                for item in value:
+                    if isinstance(item, dict):
+                        count_instances_in_data(item, current_path)
+    
+    # Count instances in the imported data
+    count_instances_in_data(imported_data)
+    
+    
+    return imported_data
 
 
 def load_xsd_schema(xsd_path: str) -> bool:
@@ -245,16 +321,8 @@ def main():
         
         # Display imported data and populate form
         if imported_data:
-            st.session_state.ingested_xml_data = imported_data
-            
-            # Clear existing form widget keys to force regeneration with new values
-            keys_to_clear = [key for key in st.session_state.keys() if not key.startswith('_') and 
-                           key not in ['xsd_parser', 'data_model_generator', 'form_generator', 
-                                     'complex_form_generator', 'xml_engine', 'xml_ingestor', 
-                                     'root_model', 'current_xsd_path', 'ingested_xml_data',
-                                     'complex_element_states', 'repeatable_instances']]
-            for key in keys_to_clear:
-                del st.session_state[key]
+            # Store the imported data temporarily
+            st.session_state.temp_imported_data = imported_data
             
             # Show XML statistics
             with st.expander("📊 XML Import Statistics", expanded=False):
@@ -278,16 +346,61 @@ def main():
                 preview = st.session_state.xml_ingestor.preview_xml_structure(imported_data)
                 st.code(preview, language='python')
             
-            # Automatically populate form when XML is imported
-            st.success("✅ XML data is ready to populate the form! Go to the Data Entry tab to see the pre-filled form.")
+            # Success message
+            st.success("✅ XML data imported successfully!")
+        
+        # Show prepopulate button if we have imported data
+        if hasattr(st.session_state, 'temp_imported_data') and st.session_state.temp_imported_data:
+            st.info("XML data has been imported. Click the button below to prepopulate the form.")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📝 Prepopulate Form", type="primary"):
+                    # Preprocess the data to handle repeatable elements
+                    preprocessed_data = preprocess_imported_data_for_repeatables(
+                        st.session_state.temp_imported_data, 
+                        st.session_state.xsd_parser
+                    )
+                    
+                    # Move preprocessed data to ingested data
+                    st.session_state.ingested_xml_data = preprocessed_data
+                    st.session_state.temp_imported_data = None
+                    
+                    # Clear existing form widget keys to force regeneration with new values
+                    keys_to_clear = [key for key in st.session_state.keys() if not key.startswith('_') and 
+                                   key not in ['xsd_parser', 'data_model_generator', 'form_generator', 
+                                             'complex_form_generator', 'xml_engine', 'xml_ingestor', 
+                                             'root_model', 'current_xsd_path', 'ingested_xml_data',
+                                             'complex_element_states', 'repeatable_instances', 'form_data',
+                                             'temp_imported_data']]
+                    for key in keys_to_clear:
+                        del st.session_state[key]
+                    
+                    st.rerun()
+            
+            with col2:
+                if st.button("❌ Discard Import"):
+                    st.session_state.temp_imported_data = None
+                    st.rerun()
         
         # Show current ingested data if exists
-        if hasattr(st.session_state, 'ingested_xml_data') and st.session_state.ingested_xml_data:
-            st.info("XML data has been imported and is ready to populate the form.")
+        elif hasattr(st.session_state, 'ingested_xml_data') and st.session_state.ingested_xml_data:
+            st.info("Form has been prepopulated with XML data.")
             
             # Option to clear imported data
             if st.button("🗑️ Clear Imported Data"):
                 st.session_state.ingested_xml_data = None
+                
+                # Clear all form widget keys to reset the form
+                keys_to_clear = [key for key in st.session_state.keys() if not key.startswith('_') and 
+                               key not in ['xsd_parser', 'data_model_generator', 'form_generator', 
+                                         'complex_form_generator', 'xml_engine', 'xml_ingestor', 
+                                         'root_model', 'current_xsd_path', 'ingested_xml_data',
+                                         'complex_element_states', 'repeatable_instances', 'temp_imported_data']]
+                for key in keys_to_clear:
+                    del st.session_state[key]
+                
                 st.rerun()
     
     with tab3:

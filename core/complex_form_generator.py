@@ -133,6 +133,9 @@ class ComplexFormGenerator:
         """Render children of a complex element"""
         children_data = {}
         
+        # Store the current instance data for child processing
+        saved_instance_data = getattr(self, 'current_instance_data', {})
+        
         if field.children:
             # Group children by type for better organization
             simple_children = [child for child in field.children if not child.is_complex and not self._is_repeatable_element(child)]
@@ -160,13 +163,22 @@ class ComplexFormGenerator:
                     if child_data is not None:
                         children_data[child.name] = child_data
         
+        # Restore the instance data context
+        self.current_instance_data = saved_instance_data
+        
         return children_data
     
     def _process_simple_field(self, field: SchemaField, level: int, key_prefix: str = "") -> Any:
         """Process a simple field (data holder)"""
         # Get pre-populated value if available
         default_value = None
-        if hasattr(self, 'pre_populated_data') and self.pre_populated_data:
+        
+        # First check if we have instance-specific data (for repeatable elements)
+        if hasattr(self, 'current_instance_data') and self.current_instance_data:
+            default_value = self._get_nested_value(self.current_instance_data, field.name)
+        
+        # If not found in instance data, check general pre-populated data
+        if default_value is None and hasattr(self, 'pre_populated_data') and self.pre_populated_data:
             # Try to find the value in the pre-populated data
             default_value = self._get_nested_value(self.pre_populated_data, field.name)
         
@@ -183,6 +195,10 @@ class ComplexFormGenerator:
         # Create unique widget key with optional prefix for repeatable elements
         base_key = f"{field.parent_path}_{field.name}" if field.parent_path else field.name
         widget_key = f"{key_prefix}_{base_key}" if key_prefix else base_key
+        
+        # Force update session state with pre-populated value if available
+        if default_value is not None and default_value != "":
+            st.session_state[widget_key] = str(default_value) if field_info['type'] == str else default_value
         
         # Create the widget directly without extra field label
         return self.base_form_generator._create_widget(field.name, field_info, widget_key)
@@ -252,21 +268,7 @@ class ComplexFormGenerator:
         
         # Store pre-populated data for use in form generation
         self.pre_populated_data = pre_populated_data or {}
-        
-        # Debug: Show pre-populated data structure
-        if self.pre_populated_data:
-            with st.expander("🔍 Debug: Pre-populated Data Structure", expanded=False):
-                st.write("Pre-populated data:")
-                st.json(self.pre_populated_data)
-                
-                # Also show current session state for debugging
-                st.write("Current form-related session state keys:")
-                form_keys = {k: v for k, v in st.session_state.items() 
-                           if not k.startswith('_') and k not in ['xsd_parser', 'data_model_generator', 
-                                                                 'form_generator', 'complex_form_generator', 
-                                                                 'xml_engine', 'xml_ingestor', 'root_model', 
-                                                                 'current_xsd_path', 'ingested_xml_data']}
-                st.json(form_keys)
+        self.current_instance_data = {}  # Track instance-specific data
         
         # Get the root structure
         root_structure = self.xsd_parser.parsed_structure
@@ -456,6 +458,13 @@ class ComplexFormGenerator:
         # Render instances
         instances_data = []
         
+        # Get pre-populated data for this field if available
+        pre_populated_list = None
+        if hasattr(self, 'pre_populated_data') and self.pre_populated_data:
+            pre_populated_list = self._get_nested_value(self.pre_populated_data, field.name)
+            if pre_populated_list and not isinstance(pre_populated_list, list):
+                pre_populated_list = [pre_populated_list]  # Convert single item to list
+        
         for i in range(instance_count):
             st.markdown("---")
             
@@ -468,6 +477,12 @@ class ComplexFormGenerator:
             # Create unique keys for this instance
             instance_key_prefix = f"{field_path}_instance_{i}"
             
+            # Set instance-specific data if available
+            if pre_populated_list and i < len(pre_populated_list):
+                self.current_instance_data = pre_populated_list[i] if isinstance(pre_populated_list[i], dict) else {field.name: pre_populated_list[i]}
+            else:
+                self.current_instance_data = {}
+            
             # Process the field content for this instance
             if field.is_complex:
                 # Complex repeatable element
@@ -477,5 +492,8 @@ class ComplexFormGenerator:
                 instance_data = self._process_simple_field(field, level + 1, instance_key_prefix)
             
             instances_data.append(instance_data)
+        
+        # Clear instance data after processing
+        self.current_instance_data = {}
         
         return instances_data
