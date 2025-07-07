@@ -104,9 +104,18 @@ class FormGenerator:
             from typing import Literal
             if field_type.__origin__ is Literal:
                 options = list(field_type.__args__)
+                
+                # For optional fields, add a blank option at the beginning
+                if not required:
+                    options = [""] + options
+                
                 # Set session state value before widget creation if we have a default
                 if default is not None and widget_key not in st.session_state:
                     st.session_state[widget_key] = default
+                elif not required and widget_key not in st.session_state:
+                    # For optional fields without default, start with blank
+                    st.session_state[widget_key] = ""
+                
                 return st.selectbox(label, options, key=widget_key, help=help_text)
         
         elif isinstance(field_type, type) and issubclass(field_type, BaseModel):
