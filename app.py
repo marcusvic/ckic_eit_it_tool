@@ -14,6 +14,7 @@ from core.data_model import DataModelGenerator
 from core.form_generator import FormGenerator
 from core.complex_form_generator import ComplexFormGenerator
 from core.xml_engine import XMLEngine
+from core.xml_ingestion import XMLIngestor
 
 
 def initialize_session_state():
@@ -28,10 +29,14 @@ def initialize_session_state():
         st.session_state.complex_form_generator = None
     if 'xml_engine' not in st.session_state:
         st.session_state.xml_engine = None
+    if 'xml_ingestor' not in st.session_state:
+        st.session_state.xml_ingestor = None
     if 'root_model' not in st.session_state:
         st.session_state.root_model = None
     if 'current_xsd_path' not in st.session_state:
         st.session_state.current_xsd_path = None
+    if 'ingested_xml_data' not in st.session_state:
+        st.session_state.ingested_xml_data = None
 
 
 def load_xsd_schema(xsd_path: str) -> bool:
@@ -57,12 +62,16 @@ def load_xsd_schema(xsd_path: str) -> bool:
         # Initialize XML engine
         xml_engine = XMLEngine(xsd_parser)
         
+        # Initialize XML ingestor
+        xml_ingestor = XMLIngestor(xsd_parser)
+        
         # Store in session state
         st.session_state.xsd_parser = xsd_parser
         st.session_state.data_model_generator = data_model_generator
         st.session_state.form_generator = form_generator
         st.session_state.complex_form_generator = complex_form_generator
         st.session_state.xml_engine = xml_engine
+        st.session_state.xml_ingestor = xml_ingestor
         st.session_state.root_model = root_model
         st.session_state.current_xsd_path = xsd_path
         
@@ -148,13 +157,19 @@ def main():
         return
     
     # Tabs for different functionalities
-    tab1, tab2, tab3, tab4 = st.tabs(["📝 Data Entry", "🔍 Preview", "✅ Validate", "📁 Export"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📝 Data Entry", "📥 XML Import", "🔍 Preview", "✅ Validate", "📁 Export"])
     
     with tab1:
         st.subheader("📝 Data Entry Form")
         
-        # Always use hierarchical form
-        form_data = st.session_state.complex_form_generator.create_complex_form_sections()
+        # Check if we have imported XML data to pre-populate the form
+        pre_populated_data = None
+        if hasattr(st.session_state, 'ingested_xml_data') and st.session_state.ingested_xml_data:
+            pre_populated_data = st.session_state.ingested_xml_data
+            st.info("📥 Form is pre-populated with imported XML data")
+        
+        # Always use hierarchical form with pre-populated data
+        form_data = st.session_state.complex_form_generator.create_complex_form_sections(pre_populated_data)
         
         # Show form completion status
         if form_data:
@@ -179,6 +194,103 @@ def main():
         st.session_state.form_data = form_data
     
     with tab2:
+        st.subheader("📥 XML Import & Population")
+        
+        # XML import options
+        xml_import_option = st.radio(
+            "Select XML source:",
+            ["Upload XML file", "Paste XML content", "Use existing XML file"]
+        )
+        
+        imported_data = None
+        
+        if xml_import_option == "Upload XML file":
+            uploaded_xml = st.file_uploader("Upload XML file", type=['xml'])
+            if uploaded_xml is not None:
+                try:
+                    # Read uploaded file content
+                    xml_content = uploaded_xml.getvalue().decode('utf-8')
+                    
+                    # Parse and populate form data
+                    imported_data = st.session_state.xml_ingestor.populate_form_from_xml_string(xml_content)
+                    
+                    st.success(f"Successfully imported XML from {uploaded_xml.name}")
+                    
+                except Exception as e:
+                    st.error(f"Error reading XML file: {str(e)}")
+        
+        elif xml_import_option == "Paste XML content":
+            xml_content = st.text_area("Paste XML content here:", height=200)
+            if xml_content.strip():
+                if st.button("Parse XML Content"):
+                    try:
+                        imported_data = st.session_state.xml_ingestor.populate_form_from_xml_string(xml_content)
+                        st.success("Successfully parsed XML content")
+                    except Exception as e:
+                        st.error(f"Error parsing XML content: {str(e)}")
+        
+        elif xml_import_option == "Use existing XML file":
+            # Look for XML files in current directory
+            xml_files = [f for f in os.listdir('.') if f.endswith('.xml')]
+            if xml_files:
+                selected_xml = st.selectbox("Select XML file:", xml_files)
+                if st.button("Load XML File"):
+                    try:
+                        imported_data = st.session_state.xml_ingestor.populate_form_from_xml(selected_xml)
+                        st.success(f"Successfully imported XML from {selected_xml}")
+                    except Exception as e:
+                        st.error(f"Error loading XML file: {str(e)}")
+            else:
+                st.warning("No XML files found in current directory")
+        
+        # Display imported data and populate form
+        if imported_data:
+            st.session_state.ingested_xml_data = imported_data
+            
+            # Clear existing form widget keys to force regeneration with new values
+            keys_to_clear = [key for key in st.session_state.keys() if not key.startswith('_') and 
+                           key not in ['xsd_parser', 'data_model_generator', 'form_generator', 
+                                     'complex_form_generator', 'xml_engine', 'xml_ingestor', 
+                                     'root_model', 'current_xsd_path', 'ingested_xml_data',
+                                     'complex_element_states', 'repeatable_instances']]
+            for key in keys_to_clear:
+                del st.session_state[key]
+            
+            # Show XML statistics
+            with st.expander("📊 XML Import Statistics", expanded=False):
+                stats = st.session_state.xml_ingestor.get_xml_statistics(imported_data)
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.metric("Total Fields", stats['total_fields'])
+                with col2:
+                    st.metric("Simple Fields", stats['simple_fields'])
+                with col3:
+                    st.metric("Complex Fields", stats['complex_fields'])
+                
+                if stats['field_names']:
+                    st.write("**Field Names:**")
+                    st.write(", ".join(stats['field_names'][:20]))
+                    if len(stats['field_names']) > 20:
+                        st.write(f"... and {len(stats['field_names']) - 20} more")
+            
+            # Show structure preview
+            with st.expander("🔍 XML Structure Preview", expanded=False):
+                preview = st.session_state.xml_ingestor.preview_xml_structure(imported_data)
+                st.code(preview, language='python')
+            
+            # Automatically populate form when XML is imported
+            st.success("✅ XML data is ready to populate the form! Go to the Data Entry tab to see the pre-filled form.")
+        
+        # Show current ingested data if exists
+        if hasattr(st.session_state, 'ingested_xml_data') and st.session_state.ingested_xml_data:
+            st.info("XML data has been imported and is ready to populate the form.")
+            
+            # Option to clear imported data
+            if st.button("🗑️ Clear Imported Data"):
+                st.session_state.ingested_xml_data = None
+                st.rerun()
+    
+    with tab3:
         st.subheader("XML Preview")
         
         if hasattr(st.session_state, 'form_data') and st.session_state.form_data:
@@ -200,7 +312,7 @@ def main():
         else:
             st.info("Fill out the form in the Data Entry tab to see XML preview")
     
-    with tab3:
+    with tab4:
         st.subheader("Validation")
         
         if hasattr(st.session_state, 'generated_xml'):
@@ -216,7 +328,7 @@ def main():
         else:
             st.info("Generate XML in the Preview tab to validate it")
     
-    with tab4:
+    with tab5:
         st.subheader("Export XML")
         
         if hasattr(st.session_state, 'generated_xml'):

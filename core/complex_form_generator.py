@@ -164,13 +164,19 @@ class ComplexFormGenerator:
     
     def _process_simple_field(self, field: SchemaField, level: int, key_prefix: str = "") -> Any:
         """Process a simple field (data holder)"""
+        # Get pre-populated value if available
+        default_value = None
+        if hasattr(self, 'pre_populated_data') and self.pre_populated_data:
+            # Try to find the value in the pre-populated data
+            default_value = self._get_nested_value(self.pre_populated_data, field.name)
+        
         # Create field info dictionary for the base form generator
         field_info = {
             'name': field.name,
             'type': self._get_field_type(field),
             'required': field.required,
             'description': field.documentation,
-            'default': None,
+            'default': default_value,
             'constraints': self._get_field_constraints(field)
         }
         
@@ -211,13 +217,56 @@ class ComplexFormGenerator:
         
         return constraints
     
-    def create_complex_form_sections(self) -> Dict[str, Any]:
+    def _get_nested_value(self, data: Dict[str, Any], field_name: str) -> Any:
+        """Get a value from nested data structure, searching recursively"""
+        if not isinstance(data, dict):
+            return None
+        
+        # First, try direct lookup
+        if field_name in data:
+            return data[field_name]
+        
+        # Then search recursively in nested dictionaries
+        for key, value in data.items():
+            if isinstance(value, dict):
+                nested_result = self._get_nested_value(value, field_name)
+                if nested_result is not None:
+                    return nested_result
+            elif isinstance(value, list):
+                # Search in list items if they are dictionaries
+                for item in value:
+                    if isinstance(item, dict):
+                        nested_result = self._get_nested_value(item, field_name)
+                        if nested_result is not None:
+                            return nested_result
+        
+        return None
+    
+    def create_complex_form_sections(self, pre_populated_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Create form sections organized by complex elements"""
         if not self.xsd_parser.parsed_structure:
             return {}
         
         st.title("📋 Dynamic XML Data Entry Form")
         st.markdown("*Fill out the sections below. Optional sections can be included or excluded as needed.*")
+        
+        # Store pre-populated data for use in form generation
+        self.pre_populated_data = pre_populated_data or {}
+        
+        # Debug: Show pre-populated data structure
+        if self.pre_populated_data:
+            with st.expander("🔍 Debug: Pre-populated Data Structure", expanded=False):
+                st.write("Pre-populated data:")
+                st.json(self.pre_populated_data)
+                
+                # Also show current session state for debugging
+                st.write("Current form-related session state keys:")
+                form_keys = {k: v for k, v in st.session_state.items() 
+                           if not k.startswith('_') and k not in ['xsd_parser', 'data_model_generator', 
+                                                                 'form_generator', 'complex_form_generator', 
+                                                                 'xml_engine', 'xml_ingestor', 'root_model', 
+                                                                 'current_xsd_path', 'ingested_xml_data']}
+                st.json(form_keys)
         
         # Get the root structure
         root_structure = self.xsd_parser.parsed_structure

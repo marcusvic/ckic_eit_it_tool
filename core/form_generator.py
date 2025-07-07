@@ -47,10 +47,14 @@ class FormGenerator:
         default = field_info.get('default')
         constraints = field_info.get('constraints', {})
         
-        # Handle PydanticUndefined or None defaults
+        # Handle PydanticUndefined defaults, but preserve None if it was explicitly set
         from pydantic_core import PydanticUndefined
-        if default in (PydanticUndefined, None):
+        if default is PydanticUndefined:
             default = self._create_default_value(field_type, constraints)
+        elif default is None:
+            # Only create fallback default if no explicit None was provided
+            if 'default' not in field_info:
+                default = self._create_default_value(field_type, constraints)
         
         # Create label with required indicator
         label = field_name.replace('_', ' ').title()
@@ -71,13 +75,22 @@ class FormGenerator:
             return self._create_number_input(label, widget_key, default, constraints, help_text, float)
         
         elif field_type == bool:
-            return st.checkbox(label, value=default or False, key=widget_key, help=help_text)
+            # Set session state value before widget creation if we have a default
+            if default is not None and widget_key not in st.session_state:
+                st.session_state[widget_key] = default
+            return st.checkbox(label, key=widget_key, help=help_text)
         
         elif field_type == date:
-            return st.date_input(label, value=default or date.today(), key=widget_key, help=help_text)
+            # Set session state value before widget creation if we have a default
+            if default is not None and widget_key not in st.session_state:
+                st.session_state[widget_key] = default
+            return st.date_input(label, key=widget_key, help=help_text)
         
         elif field_type == datetime:
-            return st.datetime_input(label, value=default or datetime.now(), key=widget_key, help=help_text)
+            # Set session state value before widget creation if we have a default
+            if default is not None and widget_key not in st.session_state:
+                st.session_state[widget_key] = default
+            return st.datetime_input(label, key=widget_key, help=help_text)
         
         elif hasattr(field_type, '__origin__') and field_type.__origin__ is Union:
             # Handle Optional types
@@ -91,7 +104,10 @@ class FormGenerator:
             from typing import Literal
             if field_type.__origin__ is Literal:
                 options = list(field_type.__args__)
-                return st.selectbox(label, options, index=0, key=widget_key, help=help_text)
+                # Set session state value before widget creation if we have a default
+                if default is not None and widget_key not in st.session_state:
+                    st.session_state[widget_key] = default
+                return st.selectbox(label, options, key=widget_key, help=help_text)
         
         elif isinstance(field_type, type) and issubclass(field_type, BaseModel):
             # Handle nested models
@@ -296,11 +312,14 @@ class FormGenerator:
         # Create meaningful placeholder text with field name for type detection
         placeholder = self._create_placeholder_text(constraints, field_name)
         
+        # Set session state value before widget creation if we have a default
+        if default is not None and default != "" and key not in st.session_state:
+            st.session_state[key] = str(default)
+        
         if max_chars and max_chars > 100:
             # Use text area for long text
             return st.text_area(
                 label,
-                value="" if default in ("", None) else str(default),
                 key=key,
                 help=help_text,
                 max_chars=max_chars,
@@ -309,7 +328,6 @@ class FormGenerator:
         else:
             return st.text_input(
                 label,
-                value="" if default in ("", None) else str(default),
                 key=key,
                 help=help_text,
                 max_chars=max_chars,
@@ -321,10 +339,13 @@ class FormGenerator:
         min_value = constraints.get('min_value')
         max_value = constraints.get('max_value')
         
+        # Set session state value before widget creation if we have a default
+        if default is not None and key not in st.session_state:
+            st.session_state[key] = default
+        
         if number_type == int:
             return st.number_input(
                 label,
-                value=default or 0,
                 min_value=min_value,
                 max_value=max_value,
                 step=1,
@@ -334,7 +355,6 @@ class FormGenerator:
         else:
             return st.number_input(
                 label,
-                value=default or 0.0,
                 min_value=min_value,
                 max_value=max_value,
                 step=0.01,
