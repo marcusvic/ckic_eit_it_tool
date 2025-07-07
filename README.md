@@ -26,7 +26,7 @@ The application follows a modular architecture:
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd eit_tool_w_claude
+cd ckic_eit_it_tool
 ```
 
 2. Install dependencies:
