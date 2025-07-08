@@ -196,8 +196,8 @@ class ComplexFormGenerator:
         base_key = f"{field.parent_path}_{field.name}" if field.parent_path else field.name
         widget_key = f"{key_prefix}_{base_key}" if key_prefix else base_key
         
-        # Force update session state with pre-populated value if available
-        if default_value is not None and default_value != "":
+        # Set session state with pre-populated value only if key doesn't exist
+        if default_value is not None and default_value != "" and widget_key not in st.session_state:
             st.session_state[widget_key] = str(default_value) if field_info['type'] == str else default_value
         
         # Create the widget directly without extra field label

@@ -367,13 +367,22 @@ def main():
                     st.session_state.ingested_xml_data = preprocessed_data
                     st.session_state.temp_imported_data = None
                     
-                    # Clear existing form widget keys to force regeneration with new values
-                    keys_to_clear = [key for key in st.session_state.keys() if not key.startswith('_') and 
-                                   key not in ['xsd_parser', 'data_model_generator', 'form_generator', 
-                                             'complex_form_generator', 'xml_engine', 'xml_ingestor', 
-                                             'root_model', 'current_xsd_path', 'ingested_xml_data',
-                                             'complex_element_states', 'repeatable_instances', 'form_data',
-                                             'temp_imported_data']]
+                    # Clear ALL form widget keys to force regeneration with new values
+                    # This includes keys with underscores that represent form fields
+                    keys_to_preserve = {
+                        'xsd_parser', 'data_model_generator', 'form_generator', 
+                        'complex_form_generator', 'xml_engine', 'xml_ingestor', 
+                        'root_model', 'current_xsd_path', 'ingested_xml_data',
+                        'complex_element_states', 'repeatable_instances', 'form_data',
+                        'temp_imported_data'
+                    }
+                    
+                    # Clear all keys except system keys (starting with _) and preserved keys
+                    keys_to_clear = []
+                    for key in list(st.session_state.keys()):
+                        if not key.startswith('_') and key not in keys_to_preserve:
+                            keys_to_clear.append(key)
+                    
                     for key in keys_to_clear:
                         del st.session_state[key]
                     
@@ -393,11 +402,19 @@ def main():
                 st.session_state.ingested_xml_data = None
                 
                 # Clear all form widget keys to reset the form
-                keys_to_clear = [key for key in st.session_state.keys() if not key.startswith('_') and 
-                               key not in ['xsd_parser', 'data_model_generator', 'form_generator', 
-                                         'complex_form_generator', 'xml_engine', 'xml_ingestor', 
-                                         'root_model', 'current_xsd_path', 'ingested_xml_data',
-                                         'complex_element_states', 'repeatable_instances', 'temp_imported_data']]
+                keys_to_preserve = {
+                    'xsd_parser', 'data_model_generator', 'form_generator', 
+                    'complex_form_generator', 'xml_engine', 'xml_ingestor', 
+                    'root_model', 'current_xsd_path', 'ingested_xml_data',
+                    'complex_element_states', 'repeatable_instances', 'temp_imported_data'
+                }
+                
+                # Clear all keys except system keys (starting with _) and preserved keys
+                keys_to_clear = []
+                for key in list(st.session_state.keys()):
+                    if not key.startswith('_') and key not in keys_to_preserve:
+                        keys_to_clear.append(key)
+                
                 for key in keys_to_clear:
                     del st.session_state[key]
                 
