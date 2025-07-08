@@ -48,36 +48,40 @@ class ComplexFormGenerator:
         
         return form_data
     
-    def _process_field(self, field: SchemaField, level: int = 0) -> Any:
+    def _process_field(self, field: SchemaField, level: int = 0, key_prefix: str = "") -> Any:
         """Process a field - either simple or complex, handling repeatability"""
         
         # Check if this is a repeatable element
         if self._is_repeatable_element(field):
-            return self._process_repeatable_field(field, level)
+            return self._process_repeatable_field(field, level, key_prefix)
         else:
             # Non-repeatable field - process normally
             if field.is_complex:
-                return self._process_complex_field(field, level)
+                return self._process_complex_field(field, level, key_prefix)
             else:
-                return self._process_simple_field(field, level)
+                return self._process_simple_field(field, level, key_prefix)
     
-    def _process_complex_field(self, field: SchemaField, level: int) -> Optional[Dict[str, Any]]:
+    def _process_complex_field(self, field: SchemaField, level: int, key_prefix: str = "") -> Optional[Dict[str, Any]]:
         """Process a complex field (container)"""
         field_path = f"{field.parent_path}.{field.name}" if field.parent_path else field.name
         
         # Create a unique key for this complex element
-        toggle_key = f"include_{field_path}_{level}"
+        # Replace dots with underscores to create valid key names
+        safe_field_path = field_path.replace('.', '_')
+        toggle_key = f"include_{safe_field_path}_{level}"
+        if key_prefix:
+            toggle_key = f"{key_prefix}_{toggle_key}"
         
         if field.required:
             # Mandatory complex element - always include
             self._render_complex_element_header(field, level, is_optional=False)
-            return self._render_complex_element_children(field, level)
+            return self._render_complex_element_children(field, level, key_prefix)
         else:
             # Optional complex element - show toggle
             include_element = self._render_optional_complex_element_toggle(field, level, toggle_key)
             
             if include_element:
-                return self._render_complex_element_children(field, level)
+                return self._render_complex_element_children(field, level, key_prefix)
             else:
                 return None
     
@@ -152,14 +156,14 @@ class ComplexFormGenerator:
             # Then render complex children
             if complex_children:
                 for child in complex_children:
-                    child_data = self._process_complex_field(child, level + 1)
+                    child_data = self._process_complex_field(child, level + 1, key_prefix)
                     if child_data is not None:
                         children_data[child.name] = child_data
             
             # Finally render repeatable children
             if repeatable_children:
                 for child in repeatable_children:
-                    child_data = self._process_repeatable_field(child, level + 1)
+                    child_data = self._process_repeatable_field(child, level + 1, key_prefix)
                     if child_data is not None:
                         children_data[child.name] = child_data
         
@@ -193,7 +197,9 @@ class ComplexFormGenerator:
         }
         
         # Create unique widget key with optional prefix for repeatable elements
-        base_key = f"{field.parent_path}_{field.name}" if field.parent_path else field.name
+        # Replace dots with underscores to create valid key names
+        safe_parent_path = field.parent_path.replace('.', '_') if field.parent_path else ""
+        base_key = f"{safe_parent_path}_{field.name}" if safe_parent_path else field.name
         widget_key = f"{key_prefix}_{base_key}" if key_prefix else base_key
         
         # Set session state with pre-populated value only if key doesn't exist
@@ -401,16 +407,18 @@ class ComplexFormGenerator:
             initial_count = max(min_instances, 1) if field.required else min_instances
             self._set_repeatable_instance_count(field_path, initial_count)
     
-    def _process_repeatable_field(self, field: SchemaField, level: int) -> List[Any]:
+    def _process_repeatable_field(self, field: SchemaField, level: int, key_prefix: Optional[str] = None) -> List[Any]:
         """Process a repeatable field (maxOccurs > 1)"""
-        field_path = f"{field.parent_path}.{field.name}" if field.parent_path else field.name
+        # Create a unique field path that includes the key prefix context
+        base_field_path = f"{field.parent_path}.{field.name}" if field.parent_path else field.name
+        field_path = f"{key_prefix}.{base_field_path}" if key_prefix else base_field_path
         indent = "  " * level
         
-        # Initialize instances if needed
-        self._initialize_repeatable_instances(field, field_path)
+        # Initialize instances if needed (use base field path for session state)
+        self._initialize_repeatable_instances(field, base_field_path)
         
         # Get current instance count
-        instance_count = self._get_repeatable_instance_count(field_path)
+        instance_count = self._get_repeatable_instance_count(base_field_path)
         min_instances = self._get_minimum_instances(field)
         
         # Create header for repeatable section
@@ -434,23 +442,27 @@ class ComplexFormGenerator:
         
         with col2:
             # Add button
-            add_key = f"add_{field_path}_{level}"
+            # Replace dots with underscores to create valid key names
+            safe_field_path = field_path.replace('.', '_')
+            add_key = f"add_{safe_field_path}_{level}"
             if st.button(f"➕ Add {field.name}", key=add_key):
                 new_count = instance_count + 1
                 # Check max limit
                 if field.max_occurs is None or new_count <= field.max_occurs:
-                    self._set_repeatable_instance_count(field_path, new_count)
+                    self._set_repeatable_instance_count(base_field_path, new_count)
                     st.rerun()
                 else:
                     st.warning(f"Maximum {field.max_occurs} instances allowed")
         
         with col3:
             # Remove button
-            remove_key = f"remove_{field_path}_{level}"
+            # Replace dots with underscores to create valid key names
+            safe_field_path = field_path.replace('.', '_')
+            remove_key = f"remove_{safe_field_path}_{level}"
             if st.button(f"➖ Remove", key=remove_key):
                 if instance_count > min_instances:
                     new_count = instance_count - 1
-                    self._set_repeatable_instance_count(field_path, new_count)
+                    self._set_repeatable_instance_count(base_field_path, new_count)
                     st.rerun()
                 else:
                     st.warning(f"Minimum {min_instances} instances required")
@@ -475,7 +487,11 @@ class ComplexFormGenerator:
                 st.markdown(f"**{indent}📄 {field.name} #{i+1}**")
             
             # Create unique keys for this instance
-            instance_key_prefix = f"{field_path}_instance_{i}"
+            # Replace dots with underscores to create valid key names
+            safe_field_path = field_path.replace('.', '_')
+            instance_key_prefix = f"{safe_field_path}_instance_{i}"
+            if key_prefix:
+                instance_key_prefix = f"{key_prefix}_{instance_key_prefix}"
             
             # Set instance-specific data if available
             if pre_populated_list and i < len(pre_populated_list):
