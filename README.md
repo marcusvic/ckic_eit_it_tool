@@ -1,6 +1,7 @@
 # EIT Tool - Dynamic XML Generator
 
 A Python application that dynamically generates XML files based on XSD schemas, with a user-friendly Streamlit interface for data collection and validation.
+EIT instruction is [here](https://eitcloud365.sharepoint.com/sites/eitittool/Shared%20Documents/Forms/AllItems.aspx?viewid=9dc948f3%2D0134%2D4c69%2Dbf73%2Dfaf3e86fcc41&csf=1&web=1&e=5l5eNb&CID=f9ecb2a1%2D50bb%2D0000%2D00d3%2D0144107de335&cidOR=SPO&FolderCTID=0x012000066028B80C57DF47890C12462FC2847D)
 
 ## Features
 
